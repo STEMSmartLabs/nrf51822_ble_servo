@@ -59,6 +59,10 @@ const int SERVO_STOP = 1500;
 const int SERVO_CW_MAX = 1000;  // Full speed clockwise
 const int SERVO_CCW_MAX = 2000; // Full speed counter-clockwise
 
+// Calibration Offsets (in microseconds) to fine-tune speeds
+const int SERVO1_CALIBRATION_OFFSET = 0; // Adjust if one motor spins slightly faster
+const int SERVO2_CALIBRATION_OFFSET = 0;
+
 // Software PWM tracking variables
 unsigned long lastPulseTime = 0;
 volatile int servo1PulseUs = SERVO_STOP; 
@@ -124,26 +128,47 @@ void loop() {
   if (now - lastPulseTime >= 20000) { // 20ms elapsed
     lastPulseTime = now;
     
-    // Set both servo pins HIGH to start the pulse
-    digitalWrite(SERVO1_PIN, HIGH);
-    digitalWrite(SERVO2_PIN, HIGH);
-    
     // Read current volatile values to avoid race conditions
     int p1 = servo1PulseUs;
     int p2 = servo2PulseUs;
     
-    // Busy-wait for the high pulse durations.
-    // A 1ms to 2ms wait every 20ms is safe and won't drop BLE packets (handled by softdevice interrupts).
-    if (p1 < p2) {
+    // Check active status
+    // Continuous rotation servos will stop completely without creep if we cut the pulse signals entirely!
+    bool s1_active = (p1 != SERVO_STOP);
+    bool s2_active = (p2 != SERVO_STOP);
+
+    if (s1_active && s2_active) {
+      // Apply calibration offsets when running
+      p1 += SERVO1_CALIBRATION_OFFSET;
+      p2 += SERVO2_CALIBRATION_OFFSET;
+      
+      digitalWrite(SERVO1_PIN, HIGH);
+      digitalWrite(SERVO2_PIN, HIGH);
+      if (p1 < p2) {
+        delayMicroseconds(p1);
+        digitalWrite(SERVO1_PIN, LOW);
+        delayMicroseconds(p2 - p1);
+        digitalWrite(SERVO2_PIN, LOW);
+      } else {
+        delayMicroseconds(p2);
+        digitalWrite(SERVO2_PIN, LOW);
+        delayMicroseconds(p1 - p2);
+        digitalWrite(SERVO1_PIN, LOW);
+      }
+    } else if (s1_active) {
+      p1 += SERVO1_CALIBRATION_OFFSET;
+      digitalWrite(SERVO1_PIN, HIGH);
       delayMicroseconds(p1);
       digitalWrite(SERVO1_PIN, LOW);
-      delayMicroseconds(p2 - p1);
-      digitalWrite(SERVO2_PIN, LOW);
-    } else {
+    } else if (s2_active) {
+      p2 += SERVO2_CALIBRATION_OFFSET;
+      digitalWrite(SERVO2_PIN, HIGH);
       delayMicroseconds(p2);
       digitalWrite(SERVO2_PIN, LOW);
-      delayMicroseconds(p1 - p2);
+    } else {
+      // Both stopped: pull low and send NO pulses to eliminate any neutral-creep!
       digitalWrite(SERVO1_PIN, LOW);
+      digitalWrite(SERVO2_PIN, LOW);
     }
   }
 }
